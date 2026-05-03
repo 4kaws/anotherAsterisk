@@ -53,7 +53,7 @@ def cli() -> None:
     "--mode",
     default=None,
     type=click.Choice(["browser", "desktop", "hybrid"]),
-    help=f"Agent mode. [default: {_cfg.agent.mode} from config]",
+    help="Agent mode: browser | desktop | hybrid. Auto-detected from task if omitted.",
 )
 @click.option("--verbose", "-v", is_flag=True, default=False)
 def run(
@@ -79,7 +79,17 @@ def run(
     resolved_max_steps = max_steps if max_steps is not None else _cfg.agent.max_steps
     resolved_vault = vault if vault is not None else _cfg.wiki.vault_path
     resolved_headless = False if headed else _cfg.agent.headless
-    resolved_mode = mode if mode is not None else _cfg.agent.mode
+
+    if mode is not None:
+        resolved_mode = mode
+        mode_source = "flag"
+    elif _cfg.agent.mode != "browser":
+        resolved_mode = _cfg.agent.mode
+        mode_source = "config"
+    else:
+        from .mode_selector import detect_mode
+        resolved_mode, mode_reason = detect_mode(task)
+        mode_source = f"auto ({mode_reason})"
 
     from .agent import Agent
 
@@ -97,7 +107,7 @@ def run(
     click.echo(
         f"Provider: {os.environ.get('LLM_PROVIDER', 'anthropic')}  |  "
         f"Max steps: {resolved_max_steps}  |  "
-        f"Mode: {resolved_mode}  |  "
+        f"Mode: {resolved_mode} [{mode_source}]  |  "
         f"Vault: {resolved_vault}"
     )
     click.echo("─" * 60)
