@@ -119,6 +119,59 @@ class ComputerTool:
         else:
             raise RuntimeError(f"desktop_type not supported on {system}")
 
+    async def hotkey(self, keys: str) -> None:
+        """Send a keyboard shortcut. keys = 'ctrl+k', 'enter', 'ctrl+shift+s', etc."""
+        system = platform.system()
+        sendkeys_str = _to_sendkeys(keys)
+        if system == "Darwin":
+            # osascript for macOS hotkeys — convert to key code approach
+            script = f'tell application "System Events" to keystroke "{sendkeys_str}"'
+            proc = await asyncio.create_subprocess_exec(
+                "osascript", "-e", script,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.wait()
+        elif system == "Linux" and _is_wsl():
+            ps_cmd = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                f"[System.Windows.Forms.SendKeys]::SendWait('{sendkeys_str}')"
+            )
+            proc = await asyncio.create_subprocess_exec(
+                "powershell.exe", "-NoProfile", "-Command", ps_cmd,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.wait()
+        elif system == "Linux":
+            proc = await asyncio.create_subprocess_exec(
+                "xdotool", "key", keys.replace("+", "+"),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.wait()
+        else:
+            raise RuntimeError(f"desktop_hotkey not supported on {system}")
+
+
+_SENDKEYS_MAP = {
+    "ctrl": "^", "shift": "+", "alt": "%",
+    "enter": "{ENTER}", "return": "{ENTER}",
+    "escape": "{ESCAPE}", "esc": "{ESCAPE}",
+    "tab": "{TAB}", "backspace": "{BACKSPACE}",
+    "delete": "{DELETE}", "del": "{DELETE}",
+    "up": "{UP}", "down": "{DOWN}", "left": "{LEFT}", "right": "{RIGHT}",
+    "home": "{HOME}", "end": "{END}",
+    "f1": "{F1}", "f2": "{F2}", "f3": "{F3}", "f4": "{F4}",
+    "f5": "{F5}", "f6": "{F6}", "f7": "{F7}", "f8": "{F8}",
+}
+
+
+def _to_sendkeys(keys: str) -> str:
+    """Convert human-friendly shortcut ('ctrl+k', 'enter') to SendKeys format."""
+    parts = [p.strip().lower() for p in keys.split("+")]
+    result = ""
+    for part in parts:
+        result += _SENDKEYS_MAP.get(part, part)
+    return result
+
 
 def _is_wsl() -> bool:
     """Return True when running inside WSL1 or WSL2."""

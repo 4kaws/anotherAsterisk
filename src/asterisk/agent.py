@@ -264,6 +264,13 @@ class Agent:
             text = action.get("value", action.get("text", ""))
             await self._computer_tool.type_text(text)
 
+        elif action_type == "desktop_hotkey":
+            keys = action.get("keys", action.get("value", ""))
+            if not keys:
+                logger.warning("desktop_hotkey action missing keys, skipping")
+                return
+            await self._computer_tool.hotkey(keys)
+
         # --- Shell ---
         elif action_type == "bash":
             command = action.get("command", "")

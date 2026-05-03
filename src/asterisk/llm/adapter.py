@@ -55,7 +55,10 @@ Available action types:
 - Desktop / computer-use actions (full OS desktop):
     desktop_screenshot — take a full desktop screenshot (use when browser is stuck)
     desktop_click      — click at pixel coordinates {x, y} on the real desktop
-    desktop_type       — type text at the current cursor position on the desktop
+    desktop_type       — type plain text at the current cursor position (no special keys)
+    desktop_hotkey     — send a keyboard shortcut, e.g. "ctrl+k", "enter", "ctrl+a", "escape"
+                         modifiers: ctrl, shift, alt. special keys: enter, escape, tab,
+                         backspace, delete, up, down, left, right, home, end, f1-f8
 - Shell:
     bash        — run a shell command, observe stdout/stderr on the next step
 - File system:
@@ -74,6 +77,16 @@ or when the browser is stuck (CAPTCHA, anti-bot wall, complex popup).
 Choose bash when you need to run system commands, scripts, or check system state.
 For Windows apps on this machine: use open with URL schemes (discord://, spotify://, ms-settings://)
 or app names. Do NOT try Linux paths or apt/snap commands to launch Windows applications.
+
+CRITICAL — desktop mode action rules:
+- When the screenshot shows a native desktop app (Discord, Spotify, File Explorer, etc.),
+  NEVER use 'click' or 'type' — those are Playwright browser actions and will fail.
+  ALWAYS use desktop_click (x, y coordinates) and desktop_type / desktop_hotkey.
+- To click something: look at the screenshot, estimate the pixel position, use desktop_click.
+- To find a user in Discord: use desktop_hotkey "ctrl+k" to open Quick Search, then
+  desktop_type their name, then desktop_hotkey "enter" to open the DM.
+- To send a message after typing: use desktop_hotkey "enter".
+- Coordinates in the screenshot correspond directly to screen pixels.
 
 The "observation" field is OPTIONAL. Only include it when you notice something
 reusable about this website that would help on future tasks.
