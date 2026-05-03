@@ -200,130 +200,170 @@ class Agent:
                         print(f"\n=== Result ===\n{final_answer}\n")
                     return counter
 
-                # 8. Execute action
+                # 8. Execute action — result is fed back to LLM on next step
                 try:
-                    await self._execute_action(browser, action)
+                    action_result = await self._execute_action(browser, action)
+                    if action_result and action_result.get("status") != "ok":
+                        self._last_tool_result = action_result
                 except Exception as e:
                     logger.warning("Action execution error on step %d: %s", step_number, e)
+                    self._last_tool_result = {
+                        "action_type": action.get("type", "unknown"),
+                        "status": "error",
+                        "error": str(e),
+                    }
 
         logger.warning("Reached max steps (%d) without completing task.", self._max_steps)
         logger.info(counter.summary())
         return counter
 
-    async def _execute_action(self, browser: BrowserController, action: dict) -> None:
-        """Dispatch a parsed action dict to the appropriate tool."""
+    async def _execute_action(self, browser: BrowserController, action: dict) -> dict:
+        """Dispatch a parsed action dict to the appropriate tool.
+
+        Always returns {"status": "ok"|"skipped"|"error", ...} so callers can
+        feed failures back to the LLM via _last_tool_result.
+        """
         action_type = action.get("type", "")
+
+        def _ok(**kw) -> dict:
+            return {"action_type": action_type, "status": "ok", **kw}
+
+        def _skip(reason: str) -> dict:
+            logger.warning("%s action skipped: %s — full action: %s", action_type, reason, action)
+            return {"action_type": action_type, "status": "skipped", "reason": reason,
+                    "received_fields": list(action.keys())}
 
         # --- Browser actions ---
         if action_type == "click":
             selector = action.get("selector", "")
             if not selector:
-                logger.warning("click action missing selector, skipping")
-                return
+                return _skip("missing 'selector' field")
             await browser.click(selector)
+            return _ok(selector=selector)
 
         elif action_type == "type":
             selector = action.get("selector", "")
             value = action.get("value", "")
             if not selector:
-                logger.warning("type action missing selector, skipping")
-                return
+                return _skip("missing 'selector' field")
             await browser.type(selector, value)
+            return _ok(selector=selector)
 
         elif action_type == "navigate":
             url = action.get("url", "")
             if not url:
-                logger.warning("navigate action missing url, skipping")
-                return
+                return _skip("missing 'url' field")
             await browser.navigate(url)
+            return _ok(url=url)
 
         elif action_type == "scroll":
             direction = action.get("direction", "down")
             pixels = int(action.get("pixels", 300))
             await browser.scroll(direction=direction, pixels=pixels)
+            return _ok()
 
         elif action_type == "wait":
             ms = int(action.get("milliseconds", 1000))
             await browser.wait(ms)
+            return _ok()
 
         elif action_type == "done":
-            pass  # handled in the loop above
+            return _ok()  # handled in the loop above
 
         # --- Desktop / computer-use actions ---
         elif action_type == "desktop_screenshot":
-            # Already taken at top of loop; this is a no-op action that signals
-            # the agent wants to see the desktop on the next step
-            pass
+            return _ok()  # screenshot already taken at top of loop
 
         elif action_type == "desktop_click":
             x = int(action.get("x", 0))
             y = int(action.get("y", 0))
             await self._computer_tool.click(x, y)
+            return _ok(x=x, y=y)
 
         elif action_type == "desktop_type":
             text = action.get("value", action.get("text", ""))
             await self._computer_tool.type_text(text)
+            return _ok(text=text)
 
         elif action_type == "desktop_hotkey":
-            keys = action.get("keys", action.get("value", ""))
+            # Accept many field name variants the LLM might produce
+            keys = (
+                action.get("keys") or action.get("key") or action.get("shortcut")
+                or action.get("hotkey") or action.get("combination")
+                or action.get("key_combination") or action.get("value") or ""
+            )
             if not keys:
-                logger.warning("desktop_hotkey action missing keys, skipping")
-                return
+                return _skip(
+                    "missing keys field — use 'keys' field with value like 'ctrl+k' or 'enter'. "
+                    f"Fields received: {list(action.keys())}"
+                )
             await self._computer_tool.hotkey(keys)
+            return _ok(keys=keys)
 
         # --- Shell ---
         elif action_type == "bash":
             command = action.get("command", "")
             if not command:
-                logger.warning("bash action missing command, skipping")
-                return
+                return _skip("missing 'command' field")
             result = await self._bash_tool.run(command)
             logger.info("bash result: %s", result)
-            self._last_tool_result = {"action": "bash", "command": command, **result}
+            r = {"action": "bash", "command": command, **result}
+            self._last_tool_result = r
+            return _ok(**result)
 
         # --- File system ---
         elif action_type == "file_read":
             path = action.get("path", "")
             if not path:
-                logger.warning("file_read action missing path, skipping")
-                return
+                return _skip("missing 'path' field")
             result = await self._file_tool.read(path)
             logger.info("file_read result: %s", result)
             self._last_tool_result = {"action": "file_read", "path": path, **result}
+            return _ok(**result)
 
         elif action_type == "file_write":
             path = action.get("path", "")
             content = action.get("content", "")
             if not path:
-                logger.warning("file_write action missing path, skipping")
-                return
+                return _skip("missing 'path' field")
             result = await self._file_tool.write(path, content)
             logger.info("file_write result: %s", result)
             self._last_tool_result = {"action": "file_write", "path": path, **result}
+            return _ok(**result)
 
         # --- Open URL in real browser / launch app ---
         elif action_type == "open":
             target = action.get("url", action.get("path", ""))
             if not target:
-                logger.warning("open action missing url/path, skipping")
-                return
+                return _skip("missing 'url' or 'path' field")
+
+            # Normalise common app names to URL protocol schemes
+            _PROTO = {"discord": "discord://", "spotify": "spotify://",
+                      "slack": "slack://", "zoom": "zoommtg://"}
+            target = _PROTO.get(target.lower().strip(), target)
+
             import platform as _plat
             from .tools.computer_tool import _is_wsl
             _sys = _plat.system()
             if _sys == "Darwin":
                 subprocess.Popen(["open", target])
             elif _sys == "Linux" and _is_wsl():
-                # powershell.exe handles UNC working directories; cmd.exe does not
-                subprocess.Popen(
-                    ["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{target}'"]
+                proc = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{target}'"],
+                    capture_output=True, text=True,
                 )
+                if proc.returncode != 0:
+                    return {"action_type": action_type, "status": "error",
+                            "error": proc.stderr.strip(), "target": target,
+                            "hint": "Use a URL scheme like 'discord://' not just 'discord'"}
             elif _sys == "Linux":
                 subprocess.Popen(["xdg-open", target])
             elif _sys == "Windows":
                 subprocess.Popen(["start", target], shell=True)
+            return _ok(target=target)
 
         else:
-            logger.warning("Unknown action type %r — skipping", action_type)
+            return _skip(f"unknown action type '{action_type}'")
 
     async def _write_step(
         self,
