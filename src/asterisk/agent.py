@@ -87,6 +87,15 @@ class Agent:
         counter = TokenCounter()
 
         writer.update_index(task_slug, task)
+        # Reset status before step 1 so the LLM sees the current task, not a stale one
+        writer.update_status(
+            task=task,
+            step=0,
+            url=start_url or "",
+            progress=f"0/{self._max_steps}",
+            last_action="Task started",
+            next_hint="Begin",
+        )
 
         async with BrowserController(
             headless=self._headless,
