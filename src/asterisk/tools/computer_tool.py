@@ -84,6 +84,8 @@ class ComputerTool:
                 stderr=asyncio.subprocess.PIPE,
             )
             await proc.wait()
+        elif system == "Linux" and _is_wsl():
+            await _wsl_click(x, y)
         elif system == "Linux":
             proc = await asyncio.create_subprocess_exec(
                 "xdotool", "mousemove", str(x), str(y), "click", "1",
@@ -105,6 +107,8 @@ class ComputerTool:
                 stderr=asyncio.subprocess.PIPE,
             )
             await proc.wait()
+        elif system == "Linux" and _is_wsl():
+            await _wsl_type(text)
         elif system == "Linux":
             proc = await asyncio.create_subprocess_exec(
                 "xdotool", "type", "--", text,
@@ -122,6 +126,47 @@ def _is_wsl() -> bool:
         return "microsoft" in Path("/proc/version").read_text().lower()
     except Exception:
         return False
+
+
+async def _wsl_click(x: int, y: int) -> None:
+    """Click at Windows desktop coordinates from WSL2 via PowerShell WinAPI."""
+    ps_cmd = (
+        "Add-Type -TypeDefinition '"
+        "using System; using System.Runtime.InteropServices; "
+        "public class W { "
+        "[DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int x, int y); "
+        "[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f,int x,int y,uint d,UIntPtr e); "
+        "public static void Click(int x,int y){ SetCursorPos(x,y); mouse_event(2,0,0,0,UIntPtr.Zero); mouse_event(4,0,0,0,UIntPtr.Zero); } "
+        "}'; "
+        f"[W]::Click({x},{y})"
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "powershell.exe", "-NoProfile", "-Command", ps_cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.wait()
+
+
+async def _wsl_type(text: str) -> None:
+    """Type text into the focused Windows app from WSL2 via PowerShell SendKeys."""
+    # Escape special SendKeys chars: +^%~(){}[]
+    escaped = ""
+    for ch in text:
+        if ch in "+^%~(){}[]":
+            escaped += "{" + ch + "}"
+        else:
+            escaped += ch
+    ps_cmd = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        f"[System.Windows.Forms.SendKeys]::SendWait('{escaped}')"
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "powershell.exe", "-NoProfile", "-Command", ps_cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.wait()
 
 
 async def _wsl_screenshot() -> bytes:

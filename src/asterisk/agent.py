@@ -73,6 +73,7 @@ class Agent:
         self._bash_tool = BashTool()
         self._computer_tool = ComputerTool()
         self._file_tool = FileTool()
+        self._last_tool_result: dict | None = None  # fed back to LLM on next step
 
     async def run(self, task: str, start_url: Optional[str] = None) -> TokenCounter:
         """
@@ -118,6 +119,14 @@ class Agent:
 
                 # 2. Load wiki context
                 context = reader.load_context(task_slug, step_number - 1)
+                # Inject bash/file result from the previous step so the LLM can see it
+                if self._last_tool_result is not None:
+                    import json as _json
+                    context["tool_result.md"] = (
+                        "# Last Tool Result\n\n"
+                        f"```json\n{_json.dumps(self._last_tool_result, indent=2)}\n```\n"
+                    )
+                    self._last_tool_result = None
 
                 # 3. Ask the LLM (retry up to 2 times on parse errors)
                 response = None
@@ -263,6 +272,7 @@ class Agent:
                 return
             result = await self._bash_tool.run(command)
             logger.info("bash result: %s", result)
+            self._last_tool_result = {"action": "bash", "command": command, **result}
 
         # --- File system ---
         elif action_type == "file_read":
@@ -272,6 +282,7 @@ class Agent:
                 return
             result = await self._file_tool.read(path)
             logger.info("file_read result: %s", result)
+            self._last_tool_result = {"action": "file_read", "path": path, **result}
 
         elif action_type == "file_write":
             path = action.get("path", "")
@@ -281,6 +292,7 @@ class Agent:
                 return
             result = await self._file_tool.write(path, content)
             logger.info("file_write result: %s", result)
+            self._last_tool_result = {"action": "file_write", "path": path, **result}
 
         # --- Open URL in real browser / launch app ---
         elif action_type == "open":
@@ -288,13 +300,17 @@ class Agent:
             if not target:
                 logger.warning("open action missing url/path, skipping")
                 return
-            import platform as _platform
-            system = _platform.system()
-            if system == "Darwin":
+            import platform as _plat
+            from .tools.computer_tool import _is_wsl
+            _sys = _plat.system()
+            if _sys == "Darwin":
                 subprocess.Popen(["open", target])
-            elif system == "Linux":
+            elif _sys == "Linux" and _is_wsl():
+                # On WSL2, cmd.exe launches Windows apps and URLs
+                subprocess.Popen(["cmd.exe", "/c", "start", "", target])
+            elif _sys == "Linux":
                 subprocess.Popen(["xdg-open", target])
-            elif system == "Windows":
+            elif _sys == "Windows":
                 subprocess.Popen(["start", target], shell=True)
 
         else:
