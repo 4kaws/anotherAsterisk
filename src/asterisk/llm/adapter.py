@@ -112,6 +112,10 @@ RULES:
   When you call "done", put the full answer to the task in the "description" field.
 - If you cannot find what is requested after navigating and looking around, call "done" with
   a clear explanation of what you found and why the task could not be completed.
+- SENDING MESSAGES: typing text into a chat input is NOT the same as sending it.
+  After desktop_type for a message, you MUST use desktop_hotkey "enter" to send.
+  Only call "done" after you have confirmed the message was sent (input box is empty
+  or the message appears in the chat history in the screenshot).
 - Never invent information. Only report what you can see in the screenshot.
 Never include anything outside the JSON object in your response.
 """
