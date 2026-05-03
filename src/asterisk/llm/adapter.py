@@ -159,7 +159,10 @@ class LLMAdapter(ABC):
         return blocks
 
     def _parse_response(self, text: str) -> dict:
-        """Extract and validate the JSON action from the model's text output."""
+        """Extract and validate the JSON action from the model's text output.
+
+        Normalises common LLM schema deviations before raising LLMParseError.
+        """
         text = text.strip()
         if text.startswith("```"):
             lines = text.splitlines()
@@ -170,9 +173,34 @@ class LLMAdapter(ABC):
         except json.JSONDecodeError as e:
             raise LLMParseError(f"Response is not valid JSON: {e}\n---\n{text[:500]}") from e
 
-        for key in ("action", "wiki_update", "status_update"):
-            if key not in data:
-                raise LLMParseError(f"Response missing required key '{key}': {data}")
+        # Normalise: {"done": {"description": "..."}} or {"done": "..."} shorthand
+        if "action" not in data and "done" in data:
+            done_val = data["done"]
+            desc = (
+                done_val.get("description", "")
+                if isinstance(done_val, dict)
+                else str(done_val)
+            )
+            data = {
+                "action": {"type": "done", "description": desc},
+                "wiki_update": data.get("wiki_update", {}),
+                "status_update": data.get("status_update", {}),
+            }
+
+        # Normalise: flat {"type": "click", ...} without "action" wrapper
+        if "action" not in data and "type" in data:
+            data = {
+                "action": data,
+                "wiki_update": data.get("wiki_update", {}),
+                "status_update": data.get("status_update", {}),
+            }
+
+        # Allow missing plumbing keys — they're optional from the agent's perspective
+        data.setdefault("wiki_update", {})
+        data.setdefault("status_update", {})
+
+        if "action" not in data:
+            raise LLMParseError(f"Response missing required key 'action': {data}")
 
         return data
 

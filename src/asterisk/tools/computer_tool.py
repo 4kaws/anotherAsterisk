@@ -27,6 +27,11 @@ class ComputerTool:
             return Path(_SCREEN_TMP).read_bytes()
 
         elif system == "Linux":
+            # On WSL2 running under Windows, use PowerShell to capture the real
+            # Windows desktop instead of the empty WSLg X display.
+            if _is_wsl():
+                return await _wsl_screenshot()
+
             for cmd in [
                 ["scrot", _SCREEN_TMP],
                 ["gnome-screenshot", "-f", _SCREEN_TMP],
@@ -109,3 +114,35 @@ class ComputerTool:
             await proc.wait()
         else:
             raise RuntimeError(f"desktop_type not supported on {system}")
+
+
+def _is_wsl() -> bool:
+    """Return True when running inside WSL1 or WSL2."""
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except Exception:
+        return False
+
+
+async def _wsl_screenshot() -> bytes:
+    """Capture the Windows desktop from WSL via powershell.exe."""
+    # Save to a Windows-accessible temp path then read it back via the WSL mount
+    win_tmp = r"C:\Windows\Temp\asterisk_screen.png"
+    wsl_tmp = "/mnt/c/Windows/Temp/asterisk_screen.png"
+    ps_cmd = (
+        "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+        "$b=[System.Drawing.Rectangle]::FromLTRB(0,0,"
+        "[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width,"
+        "[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height); "
+        "$bmp=New-Object System.Drawing.Bitmap($b.Width,$b.Height); "
+        "$g=[System.Drawing.Graphics]::FromImage($bmp); "
+        "$g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size); "
+        f"$bmp.Save('{win_tmp}')"
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "powershell.exe", "-NoProfile", "-Command", ps_cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    await proc.wait()
+    return Path(wsl_tmp).read_bytes()
