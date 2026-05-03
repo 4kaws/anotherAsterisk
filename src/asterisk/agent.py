@@ -306,8 +306,10 @@ class Agent:
             if _sys == "Darwin":
                 subprocess.Popen(["open", target])
             elif _sys == "Linux" and _is_wsl():
-                # On WSL2, cmd.exe launches Windows apps and URLs
-                subprocess.Popen(["cmd.exe", "/c", "start", "", target])
+                # powershell.exe handles UNC working directories; cmd.exe does not
+                subprocess.Popen(
+                    ["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{target}'"]
+                )
             elif _sys == "Linux":
                 subprocess.Popen(["xdg-open", target])
             elif _sys == "Windows":

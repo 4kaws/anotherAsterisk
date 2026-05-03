@@ -62,7 +62,9 @@ Available action types:
     file_read   — read a file from disk (path)
     file_write  — write content to a file on disk (path + content)
 - App launch:
-    open        — open a URL in the real browser or launch a desktop app by path
+    open        — open a URL or app; use Windows/macOS URL schemes (e.g. discord://, spotify://)
+                  or Windows app names (e.g. "notepad", "calc"). Do NOT use Linux paths like
+                  /usr/bin/... — the machine runs Windows apps through WSL2.
 - Completion:
     done        — task is complete; put the full answer in "description"
 
@@ -70,6 +72,8 @@ Choose browser actions when you have navigated to a URL in the controlled browse
 Choose desktop actions when you need to interact with the real desktop or any native app,
 or when the browser is stuck (CAPTCHA, anti-bot wall, complex popup).
 Choose bash when you need to run system commands, scripts, or check system state.
+For Windows apps on this machine: use open with URL schemes (discord://, spotify://, ms-settings://)
+or app names. Do NOT try Linux paths or apt/snap commands to launch Windows applications.
 
 The "observation" field is OPTIONAL. Only include it when you notice something
 reusable about this website that would help on future tasks.
