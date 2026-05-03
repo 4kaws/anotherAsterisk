@@ -119,18 +119,6 @@ class Agent:
 
                 # 2. Load wiki context
                 context = reader.load_context(task_slug, step_number - 1)
-                # Inject mode-specific constraints so the LLM can't drift to wrong action types
-                if self._mode == "desktop":
-                    context["_mode_instructions.md"] = (
-                        "# MODE: DESKTOP — STRICT RULES\n\n"
-                        "The screenshot is of the REAL Windows desktop, not a browser.\n\n"
-                        "ALLOWED actions: open, desktop_click, desktop_type, desktop_hotkey, "
-                        "desktop_screenshot, bash, file_read, file_write, done.\n\n"
-                        "FORBIDDEN actions: navigate, click (selector), type (selector), scroll, wait. "
-                        "Using these will fail silently — the desktop cannot receive Playwright commands.\n\n"
-                        "Do the task directly using desktop actions. "
-                        "Do NOT open a web browser or navigate to a website unless the task explicitly asks for it."
-                    )
                 # Inject bash/file result from the previous step so the LLM can see it
                 if self._last_tool_result is not None:
                     import json as _json
