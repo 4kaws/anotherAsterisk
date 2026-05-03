@@ -1,13 +1,38 @@
 """Playwright browser controller — manages a single persistent browser context."""
 from __future__ import annotations
 
+import asyncio
+import logging
+from pathlib import Path
 from typing import Literal, Optional
 
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright.async_api import async_playwright, BrowserContext, Page
+
+logger = logging.getLogger(__name__)
+
+PROFILE_DIR = Path.home() / ".asterisk" / "browser-profile"
+
+COOKIE_SELECTORS = [
+    # Generic accept buttons
+    "button[id*='accept']", "button[id*='cookie']", "button[id*='consent']",
+    "button[class*='accept']", "button[class*='cookie']",
+    # Common text patterns (Playwright :has-text pseudo-selector)
+    "button:has-text('Accept all')", "button:has-text('Accept All')",
+    "button:has-text('Allow all')", "button:has-text('Allow All')",
+    "button:has-text('Accept cookies')", "button:has-text('I agree')",
+    "button:has-text('OK')", "button:has-text('Got it')",
+    "button:has-text('Agree')", "button:has-text('Continue')",
+    # GDPR specific
+    "[aria-label*='Accept']", "[data-testid*='accept']",
+    "#onetrust-accept-btn-handler",
+    ".cc-accept", ".cc-btn",
+    "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
+    "[data-gdpr-expression='acceptAll']",
+]
 
 
 class BrowserController:
-    """Async context manager wrapping a Playwright browser session."""
+    """Async context manager wrapping a Playwright persistent browser session."""
 
     def __init__(
         self,
@@ -21,30 +46,46 @@ class BrowserController:
         self._viewport_width = viewport_width
         self._viewport_height = viewport_height
         self._playwright = None
-        self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
 
     async def __aenter__(self) -> "BrowserController":
+        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
+
+        self._context = await self._playwright.chromium.launch_persistent_context(
+            str(PROFILE_DIR),
             headless=self._headless,
             slow_mo=self._slow_mo,
+            viewport={"width": self._viewport_width, "height": self._viewport_height},
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="en-US",
+            timezone_id="Europe/Bucharest",
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         )
-        self._context = await self._browser.new_context(
-            viewport={"width": self._viewport_width, "height": self._viewport_height},
-        )
+
         self._page = await self._context.new_page()
-        # Ensure there is a rendered page before the first screenshot
+
+        # Auto-accept native browser dialogs (alert/confirm/prompt)
+        self._page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
+
+        # Apply stealth mode to avoid bot detection
+        try:
+            from playwright_stealth import stealth_async
+            await stealth_async(self._page)
+        except ImportError:
+            logger.debug("playwright-stealth not installed; skipping stealth mode")
+
         await self._page.goto("about:blank", wait_until="domcontentloaded")
         return self
 
     async def __aexit__(self, *_) -> None:
         if self._context:
             await self._context.close()
-        if self._browser:
-            await self._browser.close()
         if self._playwright:
             await self._playwright.stop()
 
@@ -54,6 +95,21 @@ class BrowserController:
 
     async def navigate(self, url: str, wait_until: str = "networkidle") -> None:
         await self._page.goto(url, wait_until=wait_until)
+        await self.dismiss_popups(self._page)
+
+    async def dismiss_popups(self, page: Page) -> bool:
+        """Try to click known cookie/consent buttons. Returns True if something was clicked."""
+        for selector in COOKIE_SELECTORS:
+            try:
+                el = await page.wait_for_selector(selector, timeout=800, state="visible")
+                if el:
+                    await el.click()
+                    await page.wait_for_timeout(500)
+                    logger.info("Dismissed cookie/consent popup via selector: %s", selector)
+                    return True
+            except Exception:
+                continue
+        return False
 
     async def screenshot(self) -> bytes:
         """Return a PNG screenshot of the current page as bytes."""

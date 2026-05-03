@@ -128,16 +128,49 @@ The index is rebuilt on each `WikiReader.load_context()` call so step files writ
 
 ## Action execution
 
-The agent supports six action types:
+The agent supports three capability tiers:
 
-| Type | Browser call | Required fields |
+### Browser actions (Playwright)
+
+| Type | Implementation | Required fields |
 |---|---|---|
-| `click` | `page.click(selector)` | `selector` |
-| `type` | `page.fill(selector, value)` + `page.type(...)` | `selector`, `value` |
-| `navigate` | `page.goto(url)` | `url` |
-| `scroll` | `page.evaluate(...)` | `direction`, `pixels` |
+| `click` | `page.click(selector)` with 3-level fallback | `selector` |
+| `type` | `page.fill` + `page.type` | `selector`, `value` |
+| `navigate` | `page.goto(url)` + auto cookie dismissal | `url` |
+| `scroll` | `page.evaluate(window.scrollBy)` | `direction`, `pixels` |
 | `wait` | `page.wait_for_timeout(ms)` | `milliseconds` |
-| `done` | (exits the loop) | — |
+| `done` | exits the loop | — |
+
+Anti-detection features:
+- **Persistent profile** at `~/.asterisk/browser-profile` — cookies/sessions survive across runs
+- **`dismiss_popups()`** — 16 COOKIE_SELECTORS tried after every `navigate()` before screenshot
+- **Dialog auto-accept** — `page.on("dialog", ...)` handles `window.alert()` / `confirm()`
+- **`playwright-stealth`** — patches `navigator.webdriver` and related fingerprint vectors
+
+### Desktop / computer-use actions (ComputerTool)
+
+| Type | Implementation | Required fields |
+|---|---|---|
+| `desktop_screenshot` | `screencapture` / `scrot` / PowerShell | — |
+| `desktop_click` | `osascript` / `xdotool` | `x`, `y` |
+| `desktop_type` | `osascript keystroke` / `xdotool type` | `value` |
+| `open` | `open` / `xdg-open` / `start` | `url` or `path` |
+
+### Shell and file system
+
+| Type | Implementation | Required fields |
+|---|---|---|
+| `bash` | `asyncio.create_subprocess_shell` (30s timeout) | `command` |
+| `file_read` | `Path.read_text` | `path` |
+| `file_write` | `Path.write_text` (creates dirs) | `path`, `content` |
+
+### Agent modes
+
+Configured via `agent.mode` in `config.yaml` or `--mode` CLI flag:
+
+- `browser` (default) — Playwright only; screenshot = browser viewport
+- `desktop` — desktop screenshot + desktop actions; Playwright browser still available for navigation
+- `hybrid` — browser for web tasks, desktop when stuck on CAPTCHA or native apps
 
 Action errors are caught, logged, and the loop continues. The agent self-corrects by observing the result in the next screenshot.
 
@@ -149,7 +182,11 @@ Action errors are caught, logged, and the loop continues. The agent self-correct
 cli.py
   └─ config.py           (load config.yaml)
   └─ agent.py
-       ├─ browser.py     (Playwright)
+       ├─ browser.py     (Playwright persistent context + cookie dismissal)
+       ├─ tools/
+       │    ├─ bash_tool.py
+       │    ├─ computer_tool.py
+       │    └─ file_tool.py
        ├─ llm/adapter.py (LLM provider abstraction)
        ├─ token_counter.py
        └─ wiki/

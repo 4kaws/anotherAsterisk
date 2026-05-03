@@ -1,8 +1,10 @@
 """Core agent loop — look → load wiki → ask → parse → act → write wiki → repeat."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import subprocess
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +13,7 @@ from typing import Optional
 from .browser import BrowserController
 from .llm.adapter import get_adapter, LLMParseError
 from .token_counter import TokenCounter
+from .tools import BashTool, ComputerTool, FileTool
 from .wiki.observation_extractor import ObservationExtractor
 from .wiki.reader import WikiReader
 from .wiki.writer import WikiWriter, WikiWriteError
@@ -40,9 +43,13 @@ class Agent:
       2. Load wiki context (status.md + current step file + linked observations)
       3. Call the LLM with screenshot + context
       4. Parse the action + wiki_update + status_update from the response
-      5. Execute the browser action
+      5. Execute the action (browser, desktop, bash, or file)
       6. Write the new step file to the wiki
       7. Update status.md
+
+    mode: "browser" — Playwright only
+          "desktop" — desktop screenshot + desktop click/type (ComputerTool)
+          "hybrid"  — browser for web tasks, falls back to desktop on CAPTCHA/stuck
     """
 
     def __init__(
@@ -53,6 +60,7 @@ class Agent:
         slow_mo: int = 0,
         viewport_width: int = 1280,
         viewport_height: int = 800,
+        mode: str = "browser",
     ) -> None:
         self._vault_path = vault_path
         self._max_steps = max_steps
@@ -60,6 +68,11 @@ class Agent:
         self._slow_mo = slow_mo
         self._viewport_width = viewport_width
         self._viewport_height = viewport_height
+        self._mode = mode
+
+        self._bash_tool = BashTool()
+        self._computer_tool = ComputerTool()
+        self._file_tool = FileTool()
 
     async def run(self, task: str, start_url: Optional[str] = None) -> TokenCounter:
         """
@@ -88,8 +101,11 @@ class Agent:
             for step_number in range(1, self._max_steps + 1):
                 logger.info("─── Step %03d / %03d ───", step_number, self._max_steps)
 
-                # 1. Screenshot
-                screenshot = await browser.screenshot()
+                # 1. Screenshot — browser viewport or full desktop depending on mode
+                if self._mode == "desktop":
+                    screenshot = await self._computer_tool.screenshot()
+                else:
+                    screenshot = await browser.screenshot()
 
                 # 2. Load wiki context
                 context = reader.load_context(task_slug, step_number - 1)
@@ -130,8 +146,6 @@ class Agent:
                 # 5a. Extract and persist any observation the LLM flagged
                 obs_slug = extractor.extract_and_save(response.parsed)
                 if obs_slug:
-                    # Link the observation back into the step's related list so
-                    # future steps can find it via wikilink resolution
                     related = wiki_update.get("related", [])
                     obs_link = f"[[observations/{obs_slug}]]"
                     if obs_link not in related:
@@ -168,21 +182,21 @@ class Agent:
                         print(f"\n=== Result ===\n{final_answer}\n")
                     return counter
 
-                # 8. Execute browser action
+                # 8. Execute action
                 try:
                     await self._execute_action(browser, action)
                 except Exception as e:
                     logger.warning("Action execution error on step %d: %s", step_number, e)
-                    # Record the failure but continue — the agent will see it in the next screenshot
 
         logger.warning("Reached max steps (%d) without completing task.", self._max_steps)
         logger.info(counter.summary())
         return counter
 
     async def _execute_action(self, browser: BrowserController, action: dict) -> None:
-        """Dispatch a parsed action dict to the appropriate BrowserController method."""
+        """Dispatch a parsed action dict to the appropriate tool."""
         action_type = action.get("type", "")
 
+        # --- Browser actions ---
         if action_type == "click":
             selector = action.get("selector", "")
             if not selector:
@@ -217,6 +231,63 @@ class Agent:
         elif action_type == "done":
             pass  # handled in the loop above
 
+        # --- Desktop / computer-use actions ---
+        elif action_type == "desktop_screenshot":
+            # Already taken at top of loop; this is a no-op action that signals
+            # the agent wants to see the desktop on the next step
+            pass
+
+        elif action_type == "desktop_click":
+            x = int(action.get("x", 0))
+            y = int(action.get("y", 0))
+            await self._computer_tool.click(x, y)
+
+        elif action_type == "desktop_type":
+            text = action.get("value", action.get("text", ""))
+            await self._computer_tool.type_text(text)
+
+        # --- Shell ---
+        elif action_type == "bash":
+            command = action.get("command", "")
+            if not command:
+                logger.warning("bash action missing command, skipping")
+                return
+            result = await self._bash_tool.run(command)
+            logger.info("bash result: %s", result)
+
+        # --- File system ---
+        elif action_type == "file_read":
+            path = action.get("path", "")
+            if not path:
+                logger.warning("file_read action missing path, skipping")
+                return
+            result = await self._file_tool.read(path)
+            logger.info("file_read result: %s", result)
+
+        elif action_type == "file_write":
+            path = action.get("path", "")
+            content = action.get("content", "")
+            if not path:
+                logger.warning("file_write action missing path, skipping")
+                return
+            result = await self._file_tool.write(path, content)
+            logger.info("file_write result: %s", result)
+
+        # --- Open URL in real browser / launch app ---
+        elif action_type == "open":
+            target = action.get("url", action.get("path", ""))
+            if not target:
+                logger.warning("open action missing url/path, skipping")
+                return
+            import platform as _platform
+            system = _platform.system()
+            if system == "Darwin":
+                subprocess.Popen(["open", target])
+            elif system == "Linux":
+                subprocess.Popen(["xdg-open", target])
+            elif system == "Windows":
+                subprocess.Popen(["start", target], shell=True)
+
         else:
             logger.warning("Unknown action type %r — skipping", action_type)
 
@@ -245,7 +316,6 @@ class Agent:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-        # If the LLM provided richer step content, extract outcome/next_hint from it
         step_content = wiki_update.get("content", "")
         if step_content:
             _extract_step_fields(step_data, step_content)

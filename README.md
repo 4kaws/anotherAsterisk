@@ -34,13 +34,14 @@ asterisk wiki            # open the vault in Obsidian (if installed)
 
 ## Configuration
 
-Edit `config.yaml` (copied from defaults on first run):
+Edit `config.yaml`:
 
 ```yaml
 agent:
   max_steps: 50
   token_budget: 100000
   headless: true
+  mode: "browser"     # browser | desktop | hybrid
 
 llm:
   anthropic:
@@ -59,8 +60,16 @@ wiki:
 CLI flags override config values:
 
 ```bash
-asterisk run "task" --max-steps 20 --headed --provider openai
+asterisk run "task" --max-steps 20 --headed --provider openai --mode hybrid
 ```
+
+### Agent modes
+
+| Mode | Screenshot source | Use when |
+|---|---|---|
+| `browser` | Playwright viewport (default) | Standard web automation |
+| `desktop` | Full OS desktop | Interacting with native apps |
+| `hybrid` | Starts browser, switches to desktop on CAPTCHA | Mixed web + desktop tasks |
 
 ---
 
@@ -90,12 +99,22 @@ asterisk run "task" --max-steps 20 --headed --provider openai
 
 Each iteration:
 
-1. **Screenshot** — capture the current browser state as a PNG
+1. **Screenshot** — browser viewport (browser/hybrid mode) or full desktop (desktop mode)
 2. **Load context** — `status.md` + `index.md` + previous step file + any observation files referenced by `[[wikilinks]]` in that step
 3. **Call LLM** — send screenshot + context; receive a JSON response with `action`, `wiki_update`, `status_update`, and optional `observation`
 4. **Write wiki** — persist the step file; extract and save any observation
-5. **Execute action** — click / type / navigate / scroll / wait / done
+5. **Execute action** — see action types below
 6. **Update status.md** — so the next step always has fresh state
+
+### Action types
+
+| Category | Types |
+|---|---|
+| Browser (Playwright) | `click`, `type`, `navigate`, `scroll`, `wait` |
+| Desktop (full OS) | `desktop_screenshot`, `desktop_click`, `desktop_type`, `open` |
+| Shell | `bash` |
+| File system | `file_read`, `file_write` |
+| Control | `done` |
 
 ---
 
@@ -148,9 +167,13 @@ No real API keys or browser required — the integration tests mock both the LLM
 ```
 src/asterisk/
 ├── agent.py                # core loop
-├── browser.py              # Playwright controller
+├── browser.py              # Playwright persistent-context controller + cookie dismissal
 ├── config.py               # config.yaml loader
 ├── token_counter.py        # per-step cost tracking
+├── tools/
+│   ├── bash_tool.py        # shell command execution
+│   ├── computer_tool.py    # full desktop screenshot + click + type
+│   └── file_tool.py        # file read/write
 ├── llm/
 │   ├── adapter.py          # base class + factory
 │   ├── anthropic_adapter.py

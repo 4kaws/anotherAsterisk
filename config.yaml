@@ -3,6 +3,7 @@ agent:
   token_budget: 100000          # hard stop if cumulative tokens exceed this
   screenshot_on_each_step: true
   headless: true                # set false for debugging
+  mode: "browser"               # browser | desktop | hybrid
 
 llm:
   anthropic:

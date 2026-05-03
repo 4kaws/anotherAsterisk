@@ -49,6 +49,12 @@ def cli() -> None:
     default=None,
     help=f"Path to wiki vault. [default: {_cfg.wiki.vault_path} from config]",
 )
+@click.option(
+    "--mode",
+    default=None,
+    type=click.Choice(["browser", "desktop", "hybrid"]),
+    help=f"Agent mode. [default: {_cfg.agent.mode} from config]",
+)
 @click.option("--verbose", "-v", is_flag=True, default=False)
 def run(
     task: str,
@@ -57,6 +63,7 @@ def run(
     max_steps: int | None,
     headed: bool,
     vault: str | None,
+    mode: str | None,
     verbose: bool,
 ) -> None:
     """Run the agent on TASK, optionally starting at URL.
@@ -72,6 +79,7 @@ def run(
     resolved_max_steps = max_steps if max_steps is not None else _cfg.agent.max_steps
     resolved_vault = vault if vault is not None else _cfg.wiki.vault_path
     resolved_headless = False if headed else _cfg.agent.headless
+    resolved_mode = mode if mode is not None else _cfg.agent.mode
 
     from .agent import Agent
 
@@ -82,12 +90,14 @@ def run(
         slow_mo=_cfg.browser.slow_mo,
         viewport_width=_cfg.browser.viewport_width,
         viewport_height=_cfg.browser.viewport_height,
+        mode=resolved_mode,
     )
 
     click.echo(f"Running task: {task!r}")
     click.echo(
         f"Provider: {os.environ.get('LLM_PROVIDER', 'anthropic')}  |  "
         f"Max steps: {resolved_max_steps}  |  "
+        f"Mode: {resolved_mode}  |  "
         f"Vault: {resolved_vault}"
     )
     click.echo("─" * 60)

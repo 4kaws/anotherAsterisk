@@ -18,6 +18,7 @@ class AgentConfig:
     token_budget: int = 100_000
     screenshot_on_each_step: bool = True
     headless: bool = True
+    mode: str = "browser"  # browser | desktop | hybrid
 
 
 @dataclass
@@ -87,6 +88,7 @@ def load_config(path: str | Path = "config.yaml") -> AsteriskConfig:
                 agent_raw.get("screenshot_on_each_step", cfg.agent.screenshot_on_each_step)
             ),
             headless=bool(agent_raw.get("headless", cfg.agent.headless)),
+            mode=str(agent_raw.get("mode", cfg.agent.mode)),
         )
 
     llm_raw = raw.get("llm", {})
