@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Test/cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime wiki vault (agent state, not source code)
+/wiki/
+
+# Claude Code internals
+.claude/
+
+# Internal planning files
+CLAUDE.md
+PROJECT_CHECKLIST.md
+start.txt
+sessions/
+skills/
+decisions/
