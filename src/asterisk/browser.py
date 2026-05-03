@@ -93,8 +93,10 @@ class BrowserController:
     def current_url(self) -> str:
         return self._page.url if self._page else ""
 
-    async def navigate(self, url: str, wait_until: str = "networkidle") -> None:
+    async def navigate(self, url: str, wait_until: str = "domcontentloaded") -> None:
         await self._page.goto(url, wait_until=wait_until)
+        # Give JS-heavy pages (YouTube, Twitter, etc.) time to render before screenshotting
+        await self._page.wait_for_timeout(1500)
         await self.dismiss_popups(self._page)
 
     async def dismiss_popups(self, page: Page) -> bool:

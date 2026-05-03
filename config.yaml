@@ -2,7 +2,7 @@ agent:
   max_steps: 50
   token_budget: 100000          # hard stop if cumulative tokens exceed this
   screenshot_on_each_step: true
-  headless: true                # set false for debugging
+  headless: false               # set true for background/server use
   mode: "browser"               # browser | desktop | hybrid
 
 llm:

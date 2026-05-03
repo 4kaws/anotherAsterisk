@@ -18,7 +18,7 @@ class TestLoadConfig:
     def test_missing_file_returns_defaults(self, tmp_path: Path):
         cfg = load_config(tmp_path / "nope.yaml")
         assert cfg.agent.max_steps == 50
-        assert cfg.agent.headless is True
+        assert cfg.agent.headless is False
         assert cfg.llm.anthropic.model == "claude-sonnet-4-6"
         assert cfg.wiki.vault_path == "./wiki"
         assert cfg.browser.viewport_width == 1280

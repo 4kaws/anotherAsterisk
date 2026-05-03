@@ -17,7 +17,7 @@ class AgentConfig:
     max_steps: int = 50
     token_budget: int = 100_000
     screenshot_on_each_step: bool = True
-    headless: bool = True
+    headless: bool = False
     mode: str = "browser"  # browser | desktop | hybrid
 
 
